@@ -1,13 +1,11 @@
 from decimal import Decimal
 
-from sqlalchemy import select, insert, update, and_, DECIMAL
-from sqlalchemy.orm import aliased
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select, update, and_
+from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError, NoResultFound, MultipleResultsFound, SQLAlchemyError
 from fastapi import status
 from fastapi.exceptions import HTTPException
 
-# from src.dao.baseDAO import BaseDAO
-from src.dao.currencyDAO import CurrencyDAO
 from src.database.database import DataBase
 from src.model.models import ExchangeRates, Currencies
 
@@ -15,25 +13,39 @@ class ExchangeRateDAO:
     model = ExchangeRates
 
     @classmethod
-    async def get_exchange_rate(cls, base_currency_code: str, target_currency_code: str):
-        """Класс для выполнения запросов к БД для таблицы exchange_rates"""
-        # todo alias для join
-        base_currency = aliased(Currencies)
-        target_currency = aliased(Currencies)
-        async with DataBase.session() as session:
+    async def get_exchange_rates(cls) -> list[ExchangeRates]:
+        async with (DataBase.session() as session):
             statement = (select(cls.model)
-                         .join(Currencies,
-                              and_(base_currency.code == base_currency_code,
-                                   base_currency.id == cls.model.base_currency_id)
-                              )
-                         .join(Currencies,
-                               and_(target_currency.code == target_currency_code,
-                                    target_currency.id == cls.model.target_currency_id)
-                               )
-                         )
+                        .options(selectinload(cls.model.base_currency),
+                                 selectinload(cls.model.target_currency))
+                        )
             result = await session.execute(statement)
-            exchange_rate = result.fetchone()
-            return exchange_rate
+            exchange_rates = result.scalars().all()
+            return exchange_rates
+
+    @classmethod
+    async def get_exchange_rate(cls, base_currency: Currencies, target_currency: Currencies):
+        try:
+            async with DataBase.session() as session:
+                exchange_rate = await session.execute(
+                    select(cls.model).
+                    where(and_
+                        (
+                            cls.model.base_currency_id == base_currency.id,
+                            cls.model.target_currency_id == target_currency.id
+                        )
+                    ).
+                    options(selectinload(cls.model.base_currency), selectinload(cls.model.target_currency))
+                )
+                return exchange_rate.scalar_one()
+        except NoResultFound as e:
+            print(e)
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail="Обменный курс для пары не найден")
+        except SQLAlchemyError as e:
+            print(e)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail="База данных недоступна.")
 
     @classmethod
     async def create_exchange_rate(cls, base_currency_code: str, target_currency_code: str, rate: Decimal):
@@ -51,20 +63,16 @@ class ExchangeRateDAO:
             new_exchange_rate = ExchangeRates(rate=rate,
                                              base_currency_id=base_currency_id,
                                              target_currency_id=target_currency_id)
-            # await session.execute(insert(ExchangeRates).
-            #                       values(base_currency_id=new_exchange_rate.base_currency_id,
-            #                              target_currency_id=new_exchange_rate.target_currency_id,
-            #                              rate=new_exchange_rate.rate
-            #                              )
-            #                       )
-
-            session.add(new_exchange_rate)
-
             try:
                 #todo scoped_session для решения raise condition
-                await session.flush()
-                # await session.refresh(new_exchange_rate)
-                return new_exchange_rate
+                session.add(new_exchange_rate)
+                await session.commit()
+                exchange_rate = await session.execute(
+                    select(cls.model).
+                    where(cls.model.id == new_exchange_rate.id).
+                    options(selectinload(cls.model.base_currency), selectinload(cls.model.target_currency))
+                )
+                return exchange_rate.scalars().first()
             except IntegrityError as e:
                 print(e.args)
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT,
@@ -72,14 +80,31 @@ class ExchangeRateDAO:
 
 
     @classmethod
-    async def update_exchange_rate(cls, base_currency_code: str, target_currency_code: str, rate: DECIMAL):
-        async with (DataBase.session() as session):
-            base_currency_id = await session.execute(select(Currencies.id).where(Currencies.code == base_currency_code))
-            target_currency_id = await session.execute(select(Currencies.id).where(Currencies.code == target_currency_code))
-            statement = (update(cls.model)
-                        .where(and_(cls.model.base_currency_id == base_currency_id,
-                                    cls.model.target_currency_id == target_currency_id)
-                        )
-                        .values(rate=rate)
-                         )
-            await session.execute(statement)
+    async def update_exchange_rate(cls, base_currency: Currencies, target_currency: Currencies, rate: Decimal):
+        try:
+            async with (DataBase.session() as session):
+                statement = (update(cls.model).
+                            where(and_(
+                                        cls.model.base_currency_id == base_currency.id,
+                                        cls.model.target_currency_id == target_currency.id)).
+                            values(rate=rate).
+                            returning(cls.model).
+                            options(selectinload(cls.model.base_currency), selectinload(cls.model.target_currency))
+                             )
+                db_result = await session.execute(statement)
+                exchange_rate = db_result.scalar_one()
+                await session.commit()
+                return exchange_rate
+        except NoResultFound as e:
+            print(e)
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                                detail="Валютная пара отсутствует в базе данных")
+        except MultipleResultsFound as e:
+            print(e)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail="Было найдено несколько записей валютной пары.")
+        except SQLAlchemyError as e:
+            print(e)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail="База данных недоступна.")
+

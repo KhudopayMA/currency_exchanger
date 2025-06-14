@@ -59,4 +59,5 @@ class CurrencyDAO:
         except SQLAlchemyError as e:
             print(e.args)
             # todo logger
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail="База данных недоступна.")
