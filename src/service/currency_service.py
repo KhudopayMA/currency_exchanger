@@ -1,5 +1,6 @@
 from src.dao.currencyDAO import CurrencyDAO
 from src.dto.currencyDTO import CurrencyDTO
+from src.dto.exceptionDTO import ExceptionDTO
 from src.model.models import Currencies
 
 from fastapi import status
@@ -22,19 +23,28 @@ class CurrencyService:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
     @classmethod
-    async def get_currency(cls, code: str) -> CurrencyDTO:
+    async def get_currency(cls, code: str) -> CurrencyDTO | ExceptionDTO:
         db_response = await CurrencyDAO.get_currency(code)
+        if isinstance(db_response, ExceptionDTO):
+            return db_response
         currency = cls.get_currency_dto(db_response)
         return currency
 
     @classmethod
-    async def get_currencies(cls) -> list[CurrencyDTO]:
+    async def get_currencies(cls) -> list[CurrencyDTO] | ExceptionDTO:
         db_response = await CurrencyDAO.get_currencies()
+        if isinstance(db_response, ExceptionDTO):
+            return db_response
         currencies = [cls.get_currency_dto(row) for row in db_response]
         return currencies
 
     @classmethod
-    async def create_currency(cls, code: str, name: str, sign: str):
+    async def create_currency(cls, code: str,
+                              name: str,
+                              sign: str
+                              ) -> CurrencyDTO | ExceptionDTO:
         db_response = await CurrencyDAO.create_currency(code=code, name=name, sign=sign)
+        if isinstance(db_response, ExceptionDTO):
+            return db_response
         currency = cls.get_currency_dto(db_response)
         return currency
