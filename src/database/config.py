@@ -5,7 +5,6 @@ dotenv.load_dotenv()
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# todo реализоваьб singleton ???
 class Settings:
     DB_NAME = os.getenv("DB_NAME")
     DB_PORT = os.getenv("DB_PORT")
