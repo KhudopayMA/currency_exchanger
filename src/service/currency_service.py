@@ -1,14 +1,14 @@
+from fastapi import status
+from sqlalchemy.exc import SQLAlchemyError, NoResultFound, IntegrityError
+
 from src.dao.currencyDAO import CurrencyDAO
 from src.dto.currencyDTO import CurrencyDTO
 from src.dto.exceptionDTO import ExceptionDTO
 from src.model.models import Currencies
 
-from fastapi import status
-from fastapi.exceptions import HTTPException
-
 class CurrencyService:
     @staticmethod
-    def get_currency_dto(db_row: Currencies) -> CurrencyDTO:
+    def get_currency_dto(db_row: Currencies) -> CurrencyDTO | ExceptionDTO:
         try:
             currency = CurrencyDTO(
                 id=db_row.id,
@@ -20,21 +20,44 @@ class CurrencyService:
         except TypeError as e:
             #todo logger
             print(e)
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ExceptionDTO(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                message="Ошибка сервера")
 
     @classmethod
     async def get_currency(cls, code: str) -> CurrencyDTO | ExceptionDTO:
-        db_response = await CurrencyDAO.get_currency(code)
-        if isinstance(db_response, ExceptionDTO):
-            return db_response
-        currency = cls.get_currency_dto(db_response)
-        return currency
+        try:
+            db_response = await CurrencyDAO.get_currency(code)
+        except NoResultFound as e:
+            print(e.args)
+            exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                             message=f"Валюта с кодом {code} не найдена.")
+            return exception_message
+        except SQLAlchemyError as e:
+            # todo logger
+            print(e.args)
+            exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                             message="База данных недоступна.")
+            return exception_message
+        try:
+            currency = cls.get_currency_dto(db_response)
+            return currency
+        except TypeError as e:
+            # todo logger
+            print(e)
+            exception_message = ExceptionDTO(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                message="Ошибка сервера")
+            return exception_message
 
     @classmethod
     async def get_currencies(cls) -> list[CurrencyDTO] | ExceptionDTO:
-        db_response = await CurrencyDAO.get_currencies()
-        if isinstance(db_response, ExceptionDTO):
-            return db_response
+        try:
+            db_response = await CurrencyDAO.get_currencies()
+        except SQLAlchemyError as e:
+            # todo logger
+            print(e.args)
+            exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                             message="База данных недоступна.")
+            return exception_message
         currencies = [cls.get_currency_dto(row) for row in db_response]
         return currencies
 
@@ -43,8 +66,19 @@ class CurrencyService:
                               name: str,
                               sign: str
                               ) -> CurrencyDTO | ExceptionDTO:
-        db_response = await CurrencyDAO.create_currency(code=code, name=name, sign=sign)
-        if isinstance(db_response, ExceptionDTO):
-            return db_response
+        try:
+            db_response = await CurrencyDAO.create_currency(code=code, name=name, sign=sign)
+        except IntegrityError as e:
+            print(e.args)
+            # todo logger
+            exception_message = ExceptionDTO(status_code=status.HTTP_409_CONFLICT,
+                                             message="Такая валюта уже добавлена.")
+            return exception_message
+        except SQLAlchemyError as e:
+            print(e.args)
+            # todo logger
+            exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                             message="База данных недоступна.")
+            return exception_message
         currency = cls.get_currency_dto(db_response)
         return currency

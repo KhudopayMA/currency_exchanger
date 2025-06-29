@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from fastapi import status
 from fastapi.exceptions import HTTPException
+from sqlalchemy.exc import SQLAlchemyError, NoResultFound, MultipleResultsFound
 
 from src.dto.exchange_ratesDTO import ExchangeRatesDTO, ExchangeRatesWithCurrenciesDTO, ExchangeDTO
 from src.dto.exceptionDTO import ExceptionDTO
@@ -13,21 +14,23 @@ from src.service.currency_service import CurrencyService
 
 class ExchangeRateService:
     @staticmethod
-    def get_exchange_rate_dto(db_row: ExchangeRates) -> ExchangeRatesDTO:
+    def get_exchange_rate_dto(db_row: ExchangeRates) -> ExchangeRatesDTO | ExceptionDTO:
         try:
             exchange_rate = ExchangeRatesDTO(
                 id=db_row.id,
                 base_currency_id=db_row.base_currency_id,
                 target_currency_id=db_row.target_currency_id,
                 rate=db_row.rate)
-
             return exchange_rate
         except TypeError as e:
             print(e)
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            # raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ExceptionDTO(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                message="Ошибка сервера")
 
     @staticmethod
-    def get_exchange_rates_with_currencies_dto(db_row: ExchangeRates) -> ExchangeRatesWithCurrenciesDTO:
+    def get_exchange_rates_with_currencies_dto(db_row: ExchangeRates
+                                               ) -> ExchangeRatesWithCurrenciesDTO | ExceptionDTO:
         try:
             exchange_rate = ExchangeRatesWithCurrenciesDTO(
                 id=db_row.id,
@@ -39,10 +42,15 @@ class ExchangeRateService:
         except TypeError as e:
             #todo logger
             print(e)
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            # raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ExceptionDTO(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                message="Ошибка сервера")
 
     @staticmethod
-    def get_exchange_dto(db_row: ExchangeRates, amount: Decimal, converted_amount: Decimal) -> ExchangeDTO:
+    def get_exchange_dto(db_row: ExchangeRates,
+                         amount: Decimal,
+                         converted_amount: Decimal
+                         ) -> ExchangeDTO | ExceptionDTO:
         try:
             exchange = ExchangeDTO(
                 id=db_row.id,
@@ -56,30 +64,53 @@ class ExchangeRateService:
         except TypeError as e:
             # todo logger
             print(e)
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
-
+            # raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)\
+            return ExceptionDTO(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                message="Ошибка сервера")
 
     @classmethod
     async def get_exchange_rates(cls) -> list[ExchangeRatesWithCurrenciesDTO] | ExceptionDTO:
-        db_response = await ExchangeRateDAO.get_exchange_rates()
-        if isinstance(db_response, ExceptionDTO):
-            return db_response
+        try:
+            db_response = await ExchangeRateDAO.get_exchange_rates()
+        except SQLAlchemyError as e:
+            print(e)
+            exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                                 message="База данных недоступна.")
+            return exception_message
         exchange_rates = [ExchangeRateService.get_exchange_rates_with_currencies_dto(row) for row in db_response]
         return exchange_rates
 
     @classmethod
     async def get_exchange_rate(cls, currencies_pair: str) -> ExchangeRatesWithCurrenciesDTO | ExceptionDTO:
-        base_currency = await CurrencyDAO.get_currency(currencies_pair[:3])
-        if isinstance(base_currency, ExceptionDTO):
-            return base_currency
-        target_currency = await CurrencyDAO.get_currency(currencies_pair[3:])
-        if isinstance(target_currency, ExceptionDTO):
-            return target_currency
-        db_response = await ExchangeRateDAO.get_exchange_rate(base_currency, target_currency)
-        if isinstance(db_response, ExceptionDTO):
-            return db_response
-        exchange_rate = ExchangeRateService.get_exchange_rates_with_currencies_dto(db_response)
-        return exchange_rate
+        try:
+            try:
+                base_currency = await CurrencyDAO.get_currency(currencies_pair[:3])
+            except NoResultFound as e:
+                print(e.args)
+                exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                                 message=f"Валюта с кодом {currencies_pair[:3]} не найдена.")
+                return exception_message
+            try:
+                target_currency = await CurrencyDAO.get_currency(currencies_pair[3:])
+            except NoResultFound as e:
+                print(e.args)
+                exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                                 message=f"Валюта с кодом {currencies_pair[3:]} не найдена.")
+                return exception_message
+            db_response = await ExchangeRateDAO.get_exchange_rate(base_currency, target_currency)
+            if db_response is None:
+                #todo logg
+                exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                                 message="Обменный курс для пары не найден")
+                return exception_message
+            exchange_rate = ExchangeRateService.get_exchange_rates_with_currencies_dto(db_response)
+            return exchange_rate
+        except SQLAlchemyError as e:
+            # todo logger
+            print(e.args)
+            exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                             message="База данных недоступна.")
+            return exception_message
 
     @classmethod
     async def create_exchange_rates(cls,
@@ -87,32 +118,82 @@ class ExchangeRateService:
                                     target_currency_code: str,
                                     rate: Decimal
                                     ) -> ExchangeRatesWithCurrenciesDTO | ExceptionDTO:
-        db_response = await ExchangeRateDAO.create_exchange_rate(base_currency_code=base_currency_code,
-                                                               target_currency_code=target_currency_code,
-                                                               rate=rate)
-        if isinstance(db_response, ExceptionDTO):
-            return db_response
-        created_exchange_rate = ExchangeRateService.get_exchange_rates_with_currencies_dto(db_response)
-        return created_exchange_rate
+        try:
+            try:
+                base_currency_id = await CurrencyDAO.get_currency_id(base_currency_code)
+            except NoResultFound as e:
+                print(e.args)
+                exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                                 message=f"Валюта с кодом {base_currency_code} не найдена.")
+                return exception_message
+            try:
+                target_currency_id = await CurrencyDAO.get_currency_id(target_currency_code)
+            except NoResultFound as e:
+                print(e.args)
+                exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                                 message=f"Валюта с кодом {target_currency_code} не найдена.")
+                return exception_message
+            db_response = await ExchangeRateDAO.create_exchange_rate(base_currency_id=base_currency_id,
+                                                                     target_currency_id=target_currency_id,
+                                                                     rate=rate)
+            created_exchange_rate = ExchangeRateService.get_exchange_rates_with_currencies_dto(db_response)
+            return created_exchange_rate
+        except SQLAlchemyError as e:
+            # todo logger
+            print(e.args)
+            exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                             message="База данных недоступна.")
+            return exception_message
+
 
     @classmethod
     async def update_exchange_rates(cls,
                                     currencies_pair: str,
                                     rate: Decimal
                                     ) -> ExchangeRatesWithCurrenciesDTO | ExceptionDTO:
-        base_currency = await CurrencyDAO.get_currency(currencies_pair[0:3])
-        if isinstance(base_currency, ExceptionDTO):
-            return base_currency
-        target_currency = await CurrencyDAO.get_currency(currencies_pair[3:])
-        if isinstance(target_currency, ExceptionDTO):
-            return target_currency
-        db_response = await ExchangeRateDAO.update_exchange_rate(base_currency=base_currency,
-                                                               target_currency=target_currency,
-                                                               rate=rate)
-        if isinstance(db_response, ExceptionDTO):
-            return db_response
-        updated_exchange_rate = ExchangeRateService.get_exchange_rates_with_currencies_dto(db_response)
-        return updated_exchange_rate
+        try:
+            try:
+                base_currency = await CurrencyDAO.get_currency(currencies_pair[0:3])
+            except NoResultFound as e:
+                print(e.args)
+                exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                                 message=f"Валюта с кодом {currencies_pair[:3]} не найдена.")
+                return exception_message
+            try:
+                target_currency = await CurrencyDAO.get_currency(currencies_pair[3:])
+            except NoResultFound as e:
+                print(e.args)
+                exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                                 message=f"Валюта с кодом {currencies_pair[3:]} не найдена.")
+                return exception_message
+            try:
+                db_response = await ExchangeRateDAO.update_exchange_rate(base_currency=base_currency,
+                                                                       target_currency=target_currency,
+                                                                       rate=rate)
+                updated_exchange_rate = ExchangeRateService.get_exchange_rates_with_currencies_dto(db_response)
+                return updated_exchange_rate
+            except NoResultFound as e:
+                print(e)
+                exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                                 message="Валютная пара отсутствует в базе данных")
+                return exception_message
+            except MultipleResultsFound as e:
+                # todo сделать constraint в бд что пара валют не может повторяться
+                print(e)
+                exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                                 message="Было найдено несколько записей валютной пары.")
+                return exception_message
+            except SQLAlchemyError as e:
+                print(e)
+                exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                                 message="База данных недоступна.")
+                return exception_message
+        except SQLAlchemyError as e:
+            # todo logger
+            print(e.args)
+            exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                             message="База данных недоступна.")
+            return exception_message
 
     @classmethod
     async def get_exchange(cls,
@@ -120,30 +201,46 @@ class ExchangeRateService:
                            currency_to: str,
                            amount: Decimal
                            ) -> ExchangeDTO | ExceptionDTO:
-        base_currency = await CurrencyDAO.get_currency(currency_from)
-        if isinstance(base_currency, ExceptionDTO):
-            return base_currency
-        target_currency = await CurrencyDAO.get_currency(currency_to)
-        if isinstance(target_currency, ExceptionDTO):
-            return target_currency
-        direct_course = await ExchangeRateDAO.get_exchange_rate(base_currency=base_currency,
-                                                            target_currency=target_currency)
-        if isinstance(direct_course, ExchangeRates):
-            converted_amount = (direct_course.rate.normalize() * amount.normalize()).quantize(Decimal("1.00"))
-            exchange = cls.get_exchange_dto(db_row=direct_course,
-                                            amount=amount,
-                                            converted_amount=converted_amount)
-            return exchange
+        try:
+            try:
+                base_currency = await CurrencyDAO.get_currency(currency_from)
+            except NoResultFound as e:
+                print(e.args)
+                exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                                 message=f"Валюта с кодом {currency_from} не найдена.")
+                return exception_message
+            try:
+                target_currency = await CurrencyDAO.get_currency(currency_to)
+            except NoResultFound as e:
+                print(e.args)
+                exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                                 message=f"Валюта с кодом {currency_to} не найдена.")
+                return exception_message
 
-        reverse_course = await ExchangeRateDAO.get_exchange_rate(base_currency=target_currency,
-                                                            target_currency=base_currency)
-        if isinstance(reverse_course, ExchangeRates):
-            converted_amount = (amount.normalize() / reverse_course.rate.normalize()).quantize(Decimal("1.00"))
-            exchange = cls.get_exchange_dto(db_row=reverse_course,
-                                            amount=amount,
-                                            converted_amount=converted_amount)
-            return exchange
+            direct_course = await ExchangeRateDAO.get_exchange_rate(base_currency=base_currency,
+                                                                target_currency=target_currency)
+            if isinstance(direct_course, ExchangeRates):
+                converted_amount = (direct_course.rate.normalize() * amount.normalize()).quantize(Decimal("1.00"))
+                exchange = cls.get_exchange_dto(db_row=direct_course,
+                                                amount=amount,
+                                                converted_amount=converted_amount)
+                return exchange
 
-        exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
-                                         message="Обменный курс для пары не найден")
-        return exception_message
+            reverse_course = await ExchangeRateDAO.get_exchange_rate(base_currency=target_currency,
+                                                                target_currency=base_currency)
+            if isinstance(reverse_course, ExchangeRates):
+                converted_amount = (amount.normalize() / reverse_course.rate.normalize()).quantize(Decimal("1.00"))
+                exchange = cls.get_exchange_dto(db_row=reverse_course,
+                                                amount=amount,
+                                                converted_amount=converted_amount)
+                return exchange
+
+            exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
+                                             message="Обменный курс для пары не найден")
+            return exception_message
+        except SQLAlchemyError as e:
+            # todo logger
+            print(e.args)
+            exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                             message="База данных недоступна.")
+            return exception_message

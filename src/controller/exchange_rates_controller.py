@@ -4,8 +4,6 @@ from decimal import Decimal
 from fastapi import APIRouter, Form, Path, Query
 from fastapi.exceptions import HTTPException
 
-from src.dao.exchange_rateDAO import ExchangeRateDAO
-from src.dao.currencyDAO import CurrencyDAO
 from src.service.exchange_rate_service import ExchangeRateService
 from src.dto.exchange_ratesDTO import ExchangeRatesWithCurrenciesDTO, ExchangeDTO
 from src.dto.exceptionDTO import ExceptionDTO
