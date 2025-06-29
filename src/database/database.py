@@ -4,6 +4,6 @@ from src.database.config import db_settings
 
 #todo что такое scoped_session
 class DataBase:
-    engine = create_async_engine(db_settings.get_db_url, echo=True)
+    engine = create_async_engine(db_settings.get_db_url)
     session = async_sessionmaker(engine, expire_on_commit=False)
 
