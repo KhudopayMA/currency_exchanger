@@ -5,6 +5,8 @@ from sqlalchemy.orm import selectinload
 
 from src.database.database import DataBase
 from src.model.models import ExchangeRates, Currencies
+
+
 class ExchangeRateDAO:
     model = ExchangeRates
 

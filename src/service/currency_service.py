@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import status
 from sqlalchemy.exc import SQLAlchemyError, NoResultFound, IntegrityError
 
@@ -5,6 +7,9 @@ from src.dao.currencyDAO import CurrencyDAO
 from src.dto.currencyDTO import CurrencyDTO
 from src.dto.exceptionDTO import ExceptionDTO
 from src.model.models import Currencies
+
+logger = logging.getLogger("base")
+
 
 class CurrencyService:
     @staticmethod
@@ -18,8 +23,7 @@ class CurrencyService:
             )
             return currency
         except TypeError as e:
-            #todo logger
-            print(e)
+            logger.error(e)
             return ExceptionDTO(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 message="Ошибка сервера")
 
@@ -28,13 +32,12 @@ class CurrencyService:
         try:
             db_response = await CurrencyDAO.get_currency(code)
         except NoResultFound as e:
-            print(e.args)
+            logger.info(e)
             exception_message = ExceptionDTO(status_code=status.HTTP_404_NOT_FOUND,
                                              message=f"Валюта с кодом {code} не найдена.")
             return exception_message
         except SQLAlchemyError as e:
-            # todo logger
-            print(e.args)
+            logger.error(e.args)
             exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                              message="База данных недоступна.")
             return exception_message
@@ -42,8 +45,7 @@ class CurrencyService:
             currency = cls.get_currency_dto(db_response)
             return currency
         except TypeError as e:
-            # todo logger
-            print(e)
+            logger.error(e)
             exception_message = ExceptionDTO(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 message="Ошибка сервера")
             return exception_message
@@ -53,8 +55,7 @@ class CurrencyService:
         try:
             db_response = await CurrencyDAO.get_currencies()
         except SQLAlchemyError as e:
-            # todo logger
-            print(e.args)
+            logger.error(e.args)
             exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                              message="База данных недоступна.")
             return exception_message
@@ -69,14 +70,12 @@ class CurrencyService:
         try:
             db_response = await CurrencyDAO.create_currency(code=code, name=name, sign=sign)
         except IntegrityError as e:
-            print(e.args)
-            # todo logger
+            logger.error(e.args)
             exception_message = ExceptionDTO(status_code=status.HTTP_409_CONFLICT,
                                              message="Такая валюта уже добавлена.")
             return exception_message
         except SQLAlchemyError as e:
-            print(e.args)
-            # todo logger
+            logger.error(e)
             exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                              message="База данных недоступна.")
             return exception_message
