@@ -174,7 +174,6 @@ class ExchangeRateService:
                                                  message="Валютная пара отсутствует в базе данных")
                 return exception_message
             except MultipleResultsFound as e:
-                # todo сделать constraint в бд что пара валют не может повторяться
                 logger.warning(e)
                 exception_message = ExceptionDTO(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                                                  message="Было найдено несколько записей валютной пары.")

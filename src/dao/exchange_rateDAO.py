@@ -44,7 +44,6 @@ class ExchangeRateDAO:
             new_exchange_rate = ExchangeRates(rate=rate,
                                              base_currency_id=base_currency_id,
                                              target_currency_id=target_currency_id)
-            #todo scoped_session для решения raise condition
             session.add(new_exchange_rate)
             await session.commit()
             exchange_rate = await session.execute(
