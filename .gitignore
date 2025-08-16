@@ -1,3 +1,4 @@
 .idea
 .env
 *base.log
+__pycache__
