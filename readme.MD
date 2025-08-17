@@ -19,6 +19,12 @@ ___
 3. Наполнить бд необходимыми таблицами используя команду в терминале для Alembic: \
  `alembic upgrade head`
 
+4. Собрать docker image: \
+   `docker build .`
+
+5. Запустить контейнер: \
+   `docker run --env-file .env --name currency_exchanger -d currency_exchanger:1.0`
+
 # REST API
 ___
 
